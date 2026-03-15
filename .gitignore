@@ -1,0 +1,14 @@
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# generated images
+pages/
+panels/
+comic_pages/
+
+# OS files
+.DS_Store
