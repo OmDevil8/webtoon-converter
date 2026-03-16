@@ -1,103 +1,66 @@
-import cv2
-import numpy as np
+import os
 from pdf2image import convert_from_path
 from PIL import Image
-import os
-import gc
 
-# create folders
-os.makedirs("pages", exist_ok=True)
-os.makedirs("panels", exist_ok=True)
+os.makedirs("slices", exist_ok=True)
 os.makedirs("comic_pages", exist_ok=True)
 
-panel_count = 0
+print("Loading PDF with explicit poppler...")
+# EXPLICIT POPPLER PATH - fixes "Terminated" crash
+images = convert_from_path("webtoon.pdf", dpi=120, 
+                          poppler_path='/usr/bin')  # Standard Ubuntu path
 
-print("Starting PDF processing...")
+print(f"Loaded {len(images)} pages!")
+slice_height = 1400
+slice_index = 0
 
-# process PDF one page at a time with low DPI
-for page_number, img in enumerate(convert_from_path("webtoon.pdf", dpi=70)):
+# STEP 1 — Slice vertical webtoon pages
+for img in images:
+    width, height = img.size
+    y = 0
+    while y < height:
+        crop = img.crop((0, y, width, min(y + slice_height, height)))
+        crop.save(f"slices/slice_{slice_index}.png")
+        slice_index += 1
+        y += slice_height
+print("Vertical slicing done")
 
-    print(f"Processing page {page_number}")
+# STEP 2 — Single column (1+2 per page)
+# page_width, page_height = 1800, 2600
+# cols, rows_per_page = 1, 2  # YOUR REQUEST
+# panel_width, panel_height = 850, 850
+# h_spacing, v_spacing = 25, 25
 
-    # resize image to reduce memory usage
-    img = img.resize((img.width // 2, img.height // 2))
+# Auto-fit panels to fill page completely
+page_width, page_height = 1800, 2600
+cols, rows_per_page = 1, 2
+panel_width = page_width - 50      # Full width minus tiny margin
+panel_height = (page_height - 75) // 2  # Split height evenly
+h_spacing = 0
+v_spacing = 25
 
-    page_path = f"pages/page_{page_number}.png"
-    img.save(page_path)
 
-    img_cv = cv2.imread(page_path)
-
-    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-
-    thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)[1]
-
-    projection = np.sum(thresh, axis=1)
-
-    cuts = []
-
-    for i in range(len(projection)):
-        if projection[i] > 0.95 * max(projection):
-            cuts.append(i)
-
-    start = 0
-
-    for cut in cuts:
-
-        panel = img_cv[start:cut, :]
-
-        if panel.shape[0] > 150:
-            panel_path = f"panels/panel_{panel_count}.png"
-            cv2.imwrite(panel_path, panel)
-            panel_count += 1
-
-        start = cut
-
-    # free memory
-    del img
-    del img_cv
-    gc.collect()
-
-print("Panel extraction finished")
-
-# build comic pages
-panel_files = sorted(os.listdir("panels"))
-
-page_width = 1600
-page_height = 2400
-
-x = 0
-y = 0
-row_height = 0
-
-page = Image.new("RGB", (page_width, page_height), "white")
+slice_files = sorted(os.listdir("slices"))
 page_number = 0
 
-for panel_file in panel_files:
+for i in range(0, len(slice_files), cols * rows_per_page):
+    page = Image.new("RGB", (page_width, page_height), "white")
+    col, row = 0, 0
+    
+    for j in range(i, min(i + cols * rows_per_page, len(slice_files))):
+        file = slice_files[j]
+        img = Image.open(f"slices/{file}")
+        img_resized = img.resize((panel_width, panel_height), Image.Resampling.LANCZOS)
+        x = col * (panel_width + h_spacing)
+        y = row * (panel_height + v_spacing)
+        page.paste(img_resized, (x, y))
+        row += 1
+        if row == rows_per_page:
+            row = 0
+            col += 1
+    
+    page.save(f"comic_pages/page_{page_number}.png")
+    page_number += 1
+    print(f"Created page_{page_number}.png")
 
-    panel = Image.open("panels/" + panel_file)
-
-    panel.thumbnail((800, 800))
-
-    if x + panel.width > page_width:
-        x = 0
-        y += row_height + 20
-        row_height = 0
-
-    if y + panel.height > page_height:
-        page.save(f"comic_pages/page_{page_number}.png")
-        page_number += 1
-
-        page = Image.new("RGB", (page_width, page_height), "white")
-
-        x = 0
-        y = 0
-
-    page.paste(panel, (x, y))
-
-    x += panel.width + 20
-
-    row_height = max(row_height, panel.height)
-
-page.save(f"comic_pages/page_{page_number}.png")
-
-print("Comic pages created successfully!")
+print("Perfect single-column pages ready!")
